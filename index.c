@@ -134,13 +134,33 @@ int index_status(const Index *index) {
 //   - hex_to_hash                      : converting the parsed string to ObjectID
 //
 // Returns 0 on success, -1 on error.
-int index_load(Index *index) {
-    // TODO: Implement index loading
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
-}
+int index_load(Index *idx) {
+    idx->count = 0;
 
+    FILE *fp = fopen(".pes/index", "r");
+
+    if (!fp) {
+        // No index file → not an error
+        return 0;
+    }
+
+    while (1) {
+        IndexEntry e;
+        char hex[HASH_HEX_SIZE + 1];
+
+        int res = fscanf(fp, "%o %s %ld %zu %s\n",
+                         &e.mode, hex, &e.mtime, &e.size, e.path);
+
+        if (res != 5) break;
+
+        hex_to_hash(hex, &e.id);
+
+        idx->entries[idx->count++] = e;
+    }
+
+    fclose(fp);
+    return 0;
+}
 // Save the index to .pes/index atomically.
 //
 // HINTS - Useful functions and syscalls:
@@ -151,11 +171,22 @@ int index_load(Index *index) {
 //   - rename                           : atomically moving the temp file over the old index
 //
 // Returns 0 on success, -1 on error.
-int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+int index_save(Index *idx) {
+    FILE *fp = fopen(".pes/index", "w");
+    if (!fp) return -1;
+
+    for (size_t i = 0; i < idx->count; i++) {
+        IndexEntry *e = &idx->entries[i];
+
+        char hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&e->id, hex);
+
+        fprintf(fp, "%o %s %ld %zu %s\n",
+                e->mode, hex, e->mtime, e->size, e->path);
+    }
+
+    fclose(fp);
+    return 0;
 }
 
 // Stage a file for the next commit.
@@ -167,9 +198,35 @@ int index_save(const Index *index) {
 //   - index_find                       : checking if the file is already staged
 //
 // Returns 0 on success, -1 on error.
-int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
+int index_add(Index *idx, const char *path) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+
+    fseek(fp, 0, SEEK_END);
+    size_t size = ftell(fp);
+    rewind(fp);
+
+    void *data = malloc(size);
+    fread(data, 1, size, fp);
+    fclose(fp);
+
+    ObjectID id;
+    object_write(OBJ_BLOB, data, size, &id);
+
+    struct stat st;
+    stat(path, &st);
+
+    IndexEntry e;
+    e.mode = 100644;
+    e.id = id;
+    e.size = size;
+    e.mtime = st.st_mtime;
+
+    strncpy(e.path, path, sizeof(e.path) - 1);
+    e.path[sizeof(e.path) - 1] = '\0';
+
+    idx->entries[idx->count++] = e;
+
+    free(data);
+    return 0;
 }
